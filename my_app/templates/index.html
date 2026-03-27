@@ -1,0 +1,225 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LRU Cache</title>
+  <link rel="stylesheet" href="{% static 'style.css' %}"/>
+</head>
+<body>
+
+  <div class="container">
+
+    <div class="header">
+      <h1>LRU Cache</h1>
+      <p class="subtitle">Capacity: 5 slots</p>
+    </div>
+
+    <div class="grid">
+
+      <!-- PUT -->
+      <div class="card">
+        <h2>Insert</h2>
+        <input type="text" id="put-key" placeholder="Key"/>
+        <input type="text" id="put-value" placeholder="Value"/>
+        <button class="btn btn-green" onclick="putValue()">Insert</button>
+        <div class="result" id="put-result"></div>
+      </div>
+
+      <!-- GET -->
+      <div class="card">
+        <h2>Lookup</h2>
+        <input type="text" id="get-key" placeholder="Key"/>
+        <button class="btn btn-blue" onclick="getValue()">Get</button>
+        <div class="result" id="get-result">—</div>
+      </div>
+
+      <!-- DELETE -->
+      <div class="card">
+        <h2>Delete</h2>
+        <input type="text" id="del-key" placeholder="Key"/>
+        <button class="btn btn-red" onclick="deleteValue()">Delete</button>
+        <div class="result" id="del-result">—</div>
+      </div>
+
+      <!-- CLEAR -->
+      <div class="card">
+        <h2>Clear Cache</h2>
+        <p class="clear-desc">Remove all entries from cache</p>
+        <button class="btn btn-gray" onclick="clearCache()">Clear All</button>
+        <div class="result" id="clear-result">—</div>
+      </div>
+
+    </div>
+
+    <!-- VISUALIZER -->
+    <div class="card visualizer">
+      <div class="vis-header">
+        <h2>Cache State</h2>
+        <span id="cap-label" class="cap-label">0 / 5 used</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="cap-fill"></div>
+      </div>
+      <div id="cache-visual" class="cache-slots">
+        <span class="empty">Cache is empty</span>
+      </div>
+      <div class="legend">
+        <span class="leg-item lru-dot">LRU — evicts next</span>
+        <span class="leg-item mru-dot">MRU — most recent</span>
+      </div>
+    </div>
+
+    <!-- LOGS TABLE -->
+    <div class="card logs-card">
+      <div class="vis-header">
+        <h2>Operation Logs</h2>
+        <button class="btn btn-blue" onclick="refreshLogs()" style="width:auto; padding: 0.4rem 1rem; font-size:0.8rem;">Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table id="logs-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Operation</th>
+              <th>Key</th>
+              <th>Value</th>
+              <th>Status</th>
+              <th>Timestamp</th>
+            </tr>
+          </thead>
+          <tbody id="logs-body">
+            <tr><td colspan="6" class="empty">No logs yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const CAPACITY = 5;
+
+    async function refreshCache() {
+      const res = await fetch('/all/');
+      const data = await res.json();
+      const items = data.items;
+
+      const fill = document.getElementById('cap-fill');
+      const label = document.getElementById('cap-label');
+      const visual = document.getElementById('cache-visual');
+
+      fill.style.width = (items.length / CAPACITY * 100) + '%';
+      label.textContent = `${items.length} / ${CAPACITY} used`;
+
+      if (items.length === 0) {
+        visual.innerHTML = '<span class="empty">Cache is empty</span>';
+        return;
+      }
+
+      visual.innerHTML = items.map(([k, v], i) => {
+        const isLRU = i === 0 && items.length > 1;
+        const isMRU = i === items.length - 1;
+        const cls = isLRU ? 'slot slot-lru' : isMRU ? 'slot slot-mru' : 'slot';
+        return `
+          <div class="${cls}">
+            ${isLRU ? '<span class="badge badge-lru">LRU</span>' : ''}
+            ${isMRU ? '<span class="badge badge-mru">MRU</span>' : ''}
+            <span class="slot-key">${k}</span>
+            <span class="slot-arrow">→</span>
+            <span class="slot-val">${v}</span>
+          </div>`;
+      }).join('');
+    }
+
+    async function refreshLogs() {
+      const res = await fetch('/logs/');
+      const data = await res.json();
+      const tbody = document.getElementById('logs-body');
+
+      if (data.logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No logs yet</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = data.logs.map(log => `
+        <tr>
+          <td>${log.id}</td>
+          <td><span class="op-badge op-${log.operation.toLowerCase()}">${log.operation}</span></td>
+          <td>${log.key || '—'}</td>
+          <td>${log.value || '—'}</td>
+          <td><span class="status-badge status-${log.status}">${log.status}</span></td>
+          <td>${log.timestamp}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function putValue() {
+      const key = document.getElementById('put-key').value.trim();
+      const value = document.getElementById('put-value').value.trim();
+      if (!key || !value) { show('put-result', '⚠ Key and value required', 'warn'); return; }
+      const res = await fetch('/put/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value })
+      });
+      const data = await res.json();
+      show('put-result', data.message || data.error, data.message ? 'ok' : 'err');
+      refreshCache();
+      refreshLogs();
+    }
+
+    async function getValue() {
+      const key = document.getElementById('get-key').value.trim();
+      if (!key) { show('get-result', '⚠ Enter a key', 'warn'); return; }
+      // Fix: was 'ge  t/' (typo with spaces). Now POST to /get/ with key in body.
+      const res = await fetch('/get/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key })
+      });
+      const data = await res.json();
+      if (data.value) {
+        show('get-result', `${data.key} → ${data.value}`, 'ok');
+      } else {
+        show('get-result', data.error || 'Not found', 'err');
+      }
+      refreshCache();
+      refreshLogs();
+    }
+
+    async function deleteValue() {
+      const key = document.getElementById('del-key').value.trim();
+      if (!key) { show('del-result', '⚠ Enter a key', 'warn'); return; }
+      const res = await fetch('/delete/', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key })
+      });
+      const data = await res.json();
+      show('del-result', data.message || data.error, data.message ? 'ok' : 'err');
+      refreshCache();
+      refreshLogs();
+    }
+
+    async function clearCache() {
+      const res = await fetch('/clear/', { method: 'POST' });
+      const data = await res.json();
+      show('clear-result', data.message || data.error, data.message ? 'ok' : 'err');
+      refreshCache();
+      refreshLogs();
+    }
+
+    function show(id, msg, type) {
+      const el = document.getElementById(id);
+      el.textContent = msg;
+      el.className = 'result ' + type;
+    }
+
+    refreshCache();
+    refreshLogs();
+  </script>
+
+</body>
+</html>
